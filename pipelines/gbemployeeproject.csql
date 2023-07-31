@@ -1,0 +1,88 @@
+CREATE TEMP FUNCTION getMaxCounterForEntityDatetime() AS (
+    (
+        SELECT
+            SAFE.DATETIME(TIMESTAMP_MICROS(SAFE_CAST(COALESCE(MAX(mdmStagingCounter), 0) AS INT64))) as maxStagingCounter
+
+        FROM gbemployeeproject
+    )
+);
+
+WITH lk_has_update_employee AS (   
+    SELECT
+        employeecode,
+        taxid,
+    FROM stg_gbemployeeproject_employee
+    WHERE mdmCounterForEntity__DATETIME__ > getMaxCounterForEntityDatetime()
+    
+    UNION DISTINCT
+
+    SELECT
+        employeecode,
+        taxid,
+    FROM stg_gbemployeeproject_geofence
+    WHERE mdmCounterForEntity__DATETIME__ > DATETIME_SUB(CURRENT_DATETIME(), INTERVAL 2 HOUR)
+),
+
+ lk_employee_stg AS (
+    SELECT * EXCEPT (ranking)
+    FROM (
+        SELECT
+            *,
+            ROW_NUMBER() OVER (PARTITION BY employeecode, taxid ORDER BY mdmCounterForEntity DESC) AS ranking
+        FROM stg_gbemployeeproject_employee AS stg
+    )
+    INNER JOIN lk_has_update_employee
+    USING (employeecode, taxid)
+
+    WHERE ranking = 1
+),
+
+lk_geofence_stg AS (
+    SELECT * EXCEPT (ranking)
+    FROM (
+        SELECT
+            *,
+            ROW_NUMBER() OVER (PARTITION BY code ORDER BY mdmCounterForEntity DESC) AS ranking
+        FROM stg_gbemployeeproject_geofence
+    )
+    INNER JOIN lk_has_update_employee
+    USING (employeecode, taxid)
+
+    WHERE ranking = 1
+),
+
+employee AS (
+    SELECT
+        stg.name AS mdmname,
+        stg.email AS mdmemailaddress,
+        stg.personid AS mdmpersonid,
+        stg.admissiondate AS admissionaldate,
+        stg.isterminated AS isterminated,
+        stg.taxid AS mdmtaxid,
+        stg.employeecode as employeecode,
+
+        ARRAY (
+            SELECT AS STRUCT
+                geo.address1 AS mdmaddress1,
+                geo.address2 AS mdmaddress2,
+                geo.address3 AS mdmaddress3,
+                geo.city AS mdmcity,
+                geo.country AS mdmcountry,
+                geo.state AS mdmstate,
+                geo.zipcode AS mdmzipcode,
+                geo.type AS mdmaddresstype,
+                geo.gmt AS gmt,
+                
+            FROM lk_geofence_stg AS geo
+            WHERE geo.employeecode = stg.employeecode AND geo.taxid = stg.taxid
+            
+        ) AS mdmaddress,
+
+        TRUE AS __resolveGeolocation
+
+
+        --metadata--
+    FROM lk_employee_stg AS stg
+)
+
+SELECT * FROM employee
