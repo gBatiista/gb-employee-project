@@ -13,14 +13,14 @@ WITH lk_has_update_employee AS (
         taxid,
     FROM stg_gbemployeeproject_employee
     WHERE mdmCounterForEntity__DATETIME__ > getMaxCounterForEntityDatetime()
-    
+
     UNION DISTINCT
 
     SELECT
         employeecode,
         taxid,
     FROM stg_gbemployeeproject_geofence
-    WHERE mdmCounterForEntity__DATETIME__ > DATETIME_SUB(CURRENT_DATETIME(), INTERVAL 2 HOUR)
+    WHERE mdmCounterForEntity__DATETIME__ > DATETIME_SUB(CURRENT_DATETIME(), INTERVAL 1 HOUR)
 ),
 
  lk_employee_stg AS (
@@ -74,14 +74,30 @@ employee AS (
                 geo.gmt AS gmt,
                 
             FROM lk_geofence_stg AS geo
-            WHERE geo.employeecode = stg.employeecode AND geo.taxid = stg.taxid
+            WHERE geo.employeecode = stg.employeecode AND geo.taxid = stg.taxid  AND geo.mdmDeleted IS NOT TRUE
             
         ) AS mdmaddress,
 
-        TRUE AS __resolveGeolocation
+        TRUE AS __resolveGeolocation,
 
+        TO_HEX(MD5(LOWER(CONCAT(
+        stg.mdmTenantId,
+        'gbemployeeproject{',
+            '"employeecode":"', stg.employeecode, '",',
+            '"mdmtaxid":"', stg.taxid, '"',
+        '}'
+        )))) as __mdmId,
 
-        --metadata--
+        (
+            stg.mdmDeleted
+            OR
+            (stg.employeecode IS NULL OR LENGTH(TRIM(stg.employeecode)) = 0)
+            OR
+            (stg.taxid IS NULL OR LENGTH(TRIM(stg.taxid)) = 0)
+        ) as mdmDeleted,
+
+        stg.mdmTenantId as __mdmTenantId, stg.mdmCounterForEntity as __mdmCounterForEntity, ARRAY[stg.mdmId] as __mdmStagingRecordIds, CASE WHEN stg.mdmEntityType is NULL THEN ARRAY[] ELSE ARRAY[SPLIT(stg.mdmEntityType, "#")[SAFE_OFFSET(0)]] END as __mdmSourceEntityNames, "303ea24f3a8e49ecafd693ebe3035782" as __mdmTaskId, "303ea24f3a8e49ecafd693ebe3035782" as __mdmSourceOperationTaskId
+
     FROM lk_employee_stg AS stg
 )
 
